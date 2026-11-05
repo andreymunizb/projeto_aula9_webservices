@@ -7,16 +7,22 @@ app.use(express.json());
 const CATALOG_URL = process.env.CATALOG_URL || "http://127.0.0.1:3001";
 const NOTIFICATION_URL = process.env.NOTIFICATION_URL || "http://127.0.0.1:3002";
 
+const pedidosCriados: any[] = [];
+
 app.post('/pedidos', async (req, res) => {
     const { produtoId, quantidade, clienteEmail } = req.body;
     const correlationId = req.headers["x-correlation-id"] ?? randomUUID();
     
+    if (!produtoId || !quantidade || quantidade <= 0 || !clienteEmail) {
+        return res.status(400).json({ mensagem: "Dados do pedido são inválidos" });
+    }
+
     console.log(`[${correlationId}] POST /pedidos recebido`);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     
-    let preco = 0;
+    let precoUnitario = 0;
     try {
         const urlCompleta = `${CATALOG_URL}/produtos/${produtoId}/reservas`;
         
@@ -43,7 +49,7 @@ app.post('/pedidos', async (req, res) => {
         }
 
         const data = await respostaCatalogo.json();
-        preco = data.preco;
+        precoUnitario = data.precoUnitario;
     } catch (error: any) {
         if (error.name === 'AbortError') {
             return res.status(504).json({ mensagem: "Catálogo demorou para responder" });
@@ -57,9 +63,14 @@ app.post('/pedidos', async (req, res) => {
         pedidoId: Math.floor(Math.random() * 1000),
         produtoId,
         quantidade,
-        total: preco * quantidade,
-        notificacaoStatus: "pendente"
+        total: precoUnitario * quantidade, 
+        clienteEmail,
+        status: "confirmado",
+        notificacaoStatus: "pendente",
+        criadoEm: new Date().toISOString()
     };
+
+    pedidosCriados.push(pedido);
 
     try {
         const respostaNotificacao = await fetch(`${NOTIFICATION_URL}/notificacoes`, {
@@ -73,6 +84,10 @@ app.post('/pedidos', async (req, res) => {
     }
 
     return res.status(201).json(pedido);
+});
+
+app.get('/pedidos', (req, res) => {
+    return res.status(200).json(pedidosCriados);
 });
 
 app.listen(process.env.PORT || 3000, () => console.log('Pedidos rodando na 3000'));

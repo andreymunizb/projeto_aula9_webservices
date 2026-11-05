@@ -21,7 +21,7 @@ app.post('/produtos/:id/reservas', (req, res) => {
     }
 
     produto.quantidade -= quantidade;
-    return res.status(200).json({ reservado: quantidade, estoqueRestante: produto.quantidade, preco: produto.preco });
+    return res.status(200).json({ reservado: quantidade, estoqueRestante: produto.quantidade, precoUnitario: produto.preco });
 });
 
 app.listen(process.env.PORT || 3001, () => console.log('Catálogo rodando na 3001'));
