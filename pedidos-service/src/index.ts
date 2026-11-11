@@ -1,13 +1,21 @@
+import "dotenv/config";
 import express from 'express';
 import { randomUUID } from 'node:crypto';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pkg from 'pg';
+
+const { Pool } = pkg;
 
 const app = express();
 app.use(express.json());
 
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
+
 const CATALOG_URL = process.env.CATALOG_URL || "http://127.0.0.1:3001";
 const NOTIFICATION_URL = process.env.NOTIFICATION_URL || "http://127.0.0.1:3002";
-
-const pedidosCriados: any[] = [];
 
 app.post('/pedidos', async (req, res) => {
     const { produtoId, quantidade, clienteEmail } = req.body;
@@ -49,7 +57,7 @@ app.post('/pedidos', async (req, res) => {
         }
 
         const data = await respostaCatalogo.json();
-        precoUnitario = data.precoUnitario;
+        precoUnitario = Number(data.precoUnitario);
     } catch (error: any) {
         if (error.name === 'AbortError') {
             return res.status(504).json({ mensagem: "Catálogo demorou para responder" });
@@ -59,35 +67,42 @@ app.post('/pedidos', async (req, res) => {
         clearTimeout(timer);
     }
 
-    const pedido = {
-        pedidoId: Math.floor(Math.random() * 1000),
-        produtoId,
-        quantidade,
-        total: precoUnitario * quantidade, 
-        clienteEmail,
-        status: "confirmado",
-        notificacaoStatus: "pendente",
-        criadoEm: new Date().toISOString()
-    };
-
-    pedidosCriados.push(pedido);
-
     try {
-        const respostaNotificacao = await fetch(`${NOTIFICATION_URL}/notificacoes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-correlation-id": String(correlationId) },
-            body: JSON.stringify({ pedidoId: pedido.pedidoId, destino: clienteEmail, mensagem: `Pedido ${pedido.pedidoId} confirmado` })
+        const pedido = await prisma.pedido.create({
+            data: {
+                produtoId,
+                quantidade,
+                clienteEmail,
+                precoUnitario,
+                total: precoUnitario * quantidade,
+                status: "CONFIRMADO"
+            }
         });
-        if (respostaNotificacao.ok) pedido.notificacaoStatus = "enviada";
-    } catch (error) {
-        console.log(`[${correlationId}] Notificação falhou, mantendo pendente`);
-    }
 
-    return res.status(201).json(pedido);
+        try {
+            await fetch(`${NOTIFICATION_URL}/notificacoes`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-correlation-id": String(correlationId) },
+                body: JSON.stringify({ pedidoId: pedido.id, destino: clienteEmail, mensagem: `Pedido ${pedido.id} confirmado` })
+            });
+        } catch (error) {
+            console.log(`[${correlationId}] Notificação falhou, mantendo fluxo`);
+        }
+
+        return res.status(201).json(pedido);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ mensagem: "Erro ao salvar pedido no banco de dados" });
+    }
 });
 
-app.get('/pedidos', (req, res) => {
-    return res.status(200).json(pedidosCriados);
+app.get('/pedidos', async (req, res) => {
+    try {
+        const pedidos = await prisma.pedido.findMany({ orderBy: { id: "asc" } });
+        return res.status(200).json(pedidos);
+    } catch (error) {
+        return res.status(500).json({ mensagem: "Erro ao buscar pedidos" });
+    }
 });
 
 app.listen(process.env.PORT || 3000, () => console.log('Pedidos rodando na 3000'));
